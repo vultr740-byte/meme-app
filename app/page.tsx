@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { FaGlobe, FaTwitter, FaTelegramPlane, FaDiscord } from "react-icons/fa";
+import { FaGlobe, FaTwitter, FaTelegramPlane, FaDiscord, FaInfoCircle, FaUser, FaRobot } from "react-icons/fa";
 import { FiCopy } from "react-icons/fi";
 import toast from "react-hot-toast";
 
@@ -28,6 +28,13 @@ type TrendingToken = {
       twitter?: string | null;
       website?: string | null;
     };
+  };
+  narrative?: {
+    title: string;
+    content: string;
+    category: string;
+    tags: string[];
+    author: string;
   };
 };
 
@@ -134,6 +141,10 @@ export default function Page() {
   const lastTokenRefreshRef = useRef(0);
   const lastMessageIdRef = useRef<string | null>(null);
   const isFirstFeedLoadRef = useRef(true);
+  const [expandedNarratives, setExpandedNarratives] = useState<Set<number>>(new Set());
+  const [narrativeCache, setNarrativeCache] = useState<Map<number, TrendingToken['narrative']>>(new Map());
+  const [loadingNarratives, setLoadingNarratives] = useState<Set<number>>(new Set());
+  const [failedNarratives, setFailedNarratives] = useState<Set<number>>(new Set());
 
   const handleFetch = useCallback(async () => {
     console.log('🔄 handleFetch 被调用, fetchingRef.current:', fetchingRef.current);
@@ -158,6 +169,7 @@ export default function Page() {
       if (!json.success) {
         throw new Error(json.message || "接口返回失败");
       }
+      
       setItems(json.responseObject || []);
       console.log('✅ handleFetch 完成');
     } catch (err) {
@@ -168,6 +180,105 @@ export default function Page() {
       fetchingRef.current = false;
     }
   }, []);
+
+
+  // 切换叙事展开状态
+  const fetchNarrative = useCallback(async (index: number, tokenAddress: string) => {
+    if (narrativeCache.has(index)) {
+      return narrativeCache.get(index);
+    }
+
+    // 如果之前已经失败过，直接返回失败状态
+    if (failedNarratives.has(index)) {
+      return 'failed';
+    }
+
+    setLoadingNarratives(prev => new Set(prev).add(index));
+
+    try {
+      const response = await fetch(`/api/narrative?tokenAddress=${tokenAddress}`, {
+        method: 'GET',
+        cache: 'no-store'
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.narrative) {
+          setNarrativeCache(prev => new Map(prev).set(index, data.narrative));
+          return data.narrative;
+        } else {
+          // API 返回成功但没有叙事数据
+          setFailedNarratives(prev => new Set(prev).add(index));
+          return 'failed';
+        }
+      } else {
+        // HTTP 请求失败
+        setFailedNarratives(prev => new Set(prev).add(index));
+        return 'failed';
+      }
+    } catch (error) {
+      console.log(`❌ 获取叙事失败:`, error);
+      setFailedNarratives(prev => new Set(prev).add(index));
+      return 'failed';
+    } finally {
+      setLoadingNarratives(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(index);
+        return newSet;
+      });
+    }
+  }, [narrativeCache, failedNarratives]);
+
+  const retryNarrative = useCallback(async (index: number) => {
+    if (!items) return;
+    const token = items[index];
+    if (!token?.token?.address) return;
+
+    // 清除失败状态，重新尝试
+    setFailedNarratives(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(index);
+      return newSet;
+    });
+
+    const result = await fetchNarrative(index, token.token.address);
+    if (result !== 'failed') {
+      setExpandedNarratives(prev => new Set(prev).add(index));
+    }
+  }, [items, fetchNarrative]);
+
+  const toggleNarrative = useCallback(async (index: number) => {
+    if (!items) return;
+    const token = items[index];
+    if (!token?.token?.address) return;
+
+    // 如果已经展开，直接收起
+    if (expandedNarratives.has(index)) {
+      setExpandedNarratives(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(index);
+        return newSet;
+      });
+      return;
+    }
+
+    // 如果之前失败过，提供重试选项
+    if (failedNarratives.has(index)) {
+      return;
+    }
+
+    // 如果缓存中没有叙事数据，先获取
+    if (!narrativeCache.has(index)) {
+      const result = await fetchNarrative(index, token.token.address);
+      // 如果获取失败，不展开叙事
+      if (result === 'failed') {
+        return;
+      }
+    }
+
+    // 展开叙事
+    setExpandedNarratives(prev => new Set(prev).add(index));
+  }, [expandedNarratives, items, narrativeCache, fetchNarrative, failedNarratives]);
 
   const handleFetchFeed = useCallback(async () => {
     console.log('🔄 handleFetchFeed 被调用, feedFetchingRef.current:', feedFetchingRef.current);
@@ -423,19 +534,22 @@ export default function Page() {
             const title = `${it.token?.name || "-"} (${it.token?.symbol || "-"})`;
             const delta24 = toNumber(it.change24);
             return (
-              <div key={idx} className="border border-neutral-800 rounded-xl p-4 flex items-start gap-4 bg-neutral-900 shadow-sm relative">
+              <div key={idx} className="space-y-0">
+                <div className={`border border-neutral-800 p-3 sm:p-4 flex items-start gap-3 sm:gap-4 bg-neutral-900 shadow-sm relative ${
+                  expandedNarratives.has(idx) ? 'rounded-t-xl' : 'rounded-xl'
+                }`}>
                 {it.token?.info?.imageThumbUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={it.token.info.imageThumbUrl}
                     alt={it.token?.symbol || "token"}
-                    className="w-14 h-14 rounded object-cover"
+                    className="w-12 h-12 sm:w-14 sm:h-14 rounded object-cover"
                   />
                 ) : (
-                  <div className="w-14 h-14 rounded bg-neutral-800" />
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded bg-neutral-800" />
                 )}
                 <div className="flex-1">
-                  <div className="font-semibold text-lg tracking-tight text-white flex items-center gap-2">
+                  <div className="font-semibold text-base sm:text-lg tracking-tight text-white flex items-center gap-2">
                     <span>{title}</span>
                     {it.token?.address && (
                       <button
@@ -449,10 +563,15 @@ export default function Page() {
                       </button>
                     )}
                   </div>
-                  <div className="mt-1 text-sm text-gray-300 flex flex-wrap items-center gap-4">
-                    <span className={`text-base font-semibold ${trendTextClass(delta24)}`}>
+                  {/* 价格显示 */}
+                  <div className="mt-1">
+                    <span className={`text-sm sm:text-base font-semibold ${trendTextClass(delta24)}`}>
                       ${formatNumber(it.priceUSD, { maximumFractionDigits: 6 })}
                     </span>
+                  </div>
+                  
+                  {/* 数据标签 - 响应式布局 */}
+                  <div className="mt-2 flex flex-wrap gap-2">
                     <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300">
                       市值 {formatCompact(it.marketCap)}
                     </span>
@@ -462,72 +581,215 @@ export default function Page() {
                     <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300">
                       交易量 {formatCompact(it.volume24)}
                     </span>
+                    {/* 可点击的叙事标签 */}
+                    {it.token?.address && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => toggleNarrative(idx)}
+                          disabled={loadingNarratives.has(idx) || failedNarratives.has(idx)}
+                          className={`text-xs px-2 py-0.5 rounded-full transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                            failedNarratives.has(idx)
+                              ? 'bg-neutral-700 text-neutral-500 cursor-not-allowed'
+                              : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white'
+                          } ${loadingNarratives.has(idx) ? 'opacity-50' : ''}`}
+                          title={
+                            failedNarratives.has(idx)
+                              ? '该 Token 暂无叙事数据'
+                              : '点击查看项目叙事'
+                          }
+                        >
+                          {loadingNarratives.has(idx) 
+                            ? '加载中...' 
+                            : failedNarratives.has(idx) 
+                              ? '暂无叙事' 
+                              : '叙事'
+                          }
+                        </button>
+                        {failedNarratives.has(idx) && (
+                          <button
+                            onClick={() => retryNarrative(idx)}
+                            disabled={loadingNarratives.has(idx)}
+                            className="text-xs px-1 py-0.5 rounded-full bg-neutral-600 text-neutral-400 hover:bg-neutral-500 hover:text-white transition-colors"
+                            title="重新尝试获取叙事"
+                          >
+                            🔄
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
+                  {/* 趋势数据 - 响应式显示 */}
                   <div className="mt-3 text-sm flex flex-wrap gap-2">
-                    {[
-                      { label: "1h", v: toNumber(it.change1) },
-                      { label: "4h", v: toNumber(it.change4) },
-                      { label: "12h", v: toNumber(it.change12) },
-                      { label: "24h", v: toNumber(it.change24) },
-                    ].map(({ label, v }) => (
-                      <span
-                        key={label}
-                        className={`px-2 py-0.5 rounded-full text-xs font-medium ${trendBadgeClass(v)}`}
-                      >
-                        {label} {formatPercent(String(v))}
-                      </span>
-                    ))}
+                    {/* 手机端只显示 1h 和 24h */}
+                    <div className="flex gap-2 sm:hidden">
+                      {[
+                        { label: "1h", v: toNumber(it.change1) },
+                        { label: "24h", v: toNumber(it.change24) },
+                      ].map(({ label, v }) => (
+                        <span
+                          key={label}
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${trendBadgeClass(v)}`}
+                        >
+                          {label} {formatPercent(String(v))}
+                        </span>
+                      ))}
+                    </div>
+                    
+                    {/* 桌面端显示全部趋势 */}
+                    <div className="hidden sm:flex gap-2">
+                      {[
+                        { label: "1h", v: toNumber(it.change1) },
+                        { label: "4h", v: toNumber(it.change4) },
+                        { label: "12h", v: toNumber(it.change12) },
+                        { label: "24h", v: toNumber(it.change24) },
+                      ].map(({ label, v }) => (
+                        <span
+                          key={label}
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${trendBadgeClass(v)}`}
+                        >
+                          {label} {formatPercent(String(v))}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 ml-2 self-start">
-                  {it.token?.socialLinks?.website && (
-                    <a
-                      href={it.token.socialLinks.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label="Website"
-                      className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
-                    >
-                      <FaGlobe size={16} />
-                    </a>
-                  )}
-                  {it.token?.socialLinks?.twitter && (
-                    <a
-                      href={it.token.socialLinks.twitter}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label="Twitter"
-                      className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
-                    >
-                      <FaTwitter size={16} />
-                    </a>
-                  )}
-                  {it.token?.socialLinks?.telegram && (
-                    <a
-                      href={it.token.socialLinks.telegram}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label="Telegram"
-                      className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
-                    >
-                      <FaTelegramPlane size={16} />
-                    </a>
-                  )}
-                  {it.token?.socialLinks?.discord && (
-                    <a
-                      href={it.token.socialLinks.discord}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label="Discord"
-                      className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
-                    >
-                      <FaDiscord size={16} />
-                    </a>
-                  )}
+                {/* 社交链接 - 响应式显示 */}
+                <div className="flex items-center gap-1 sm:gap-2 ml-2 self-start">
+                  {/* 手机端只显示 Twitter 和 Telegram */}
+                  <div className="flex gap-1 sm:hidden">
+                    {it.token?.socialLinks?.twitter && (
+                      <a
+                        href={it.token.socialLinks.twitter}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Twitter"
+                        className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                      >
+                        <FaTwitter size={14} />
+                      </a>
+                    )}
+                    {it.token?.socialLinks?.telegram && (
+                      <a
+                        href={it.token.socialLinks.telegram}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Telegram"
+                        className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                      >
+                        <FaTelegramPlane size={14} />
+                      </a>
+                    )}
+                  </div>
+                  
+                  {/* 桌面端显示全部社交链接 */}
+                  <div className="hidden sm:flex gap-2">
+                    {it.token?.socialLinks?.website && (
+                      <a
+                        href={it.token.socialLinks.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Website"
+                        className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                      >
+                        <FaGlobe size={16} />
+                      </a>
+                    )}
+                    {it.token?.socialLinks?.twitter && (
+                      <a
+                        href={it.token.socialLinks.twitter}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Twitter"
+                        className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                      >
+                        <FaTwitter size={16} />
+                      </a>
+                    )}
+                    {it.token?.socialLinks?.telegram && (
+                      <a
+                        href={it.token.socialLinks.telegram}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Telegram"
+                        className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                      >
+                        <FaTelegramPlane size={16} />
+                      </a>
+                    )}
+                    {it.token?.socialLinks?.discord && (
+                      <a
+                        href={it.token.socialLinks.discord}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Discord"
+                        className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+                      >
+                        <FaDiscord size={16} />
+                      </a>
+                    )}
+                  </div>
                 </div>
+                
+                
                 {it.createdAt && (
-                  <div className="absolute bottom-4 right-4 text-xs text-neutral-500">
-                    创建于 {timeAgo(new Date(it.createdAt * 1000))}
+                  <div className="absolute bottom-2 right-2 sm:bottom-4 sm:right-4 text-xs text-neutral-500">
+                    <span className="hidden sm:inline">创建于 </span>{timeAgo(new Date(it.createdAt * 1000))}
+                  </div>
+                )}
+                </div>
+                
+                {/* 展开的叙事内容 - 抽屉效果 */}
+                {expandedNarratives.has(idx) && narrativeCache.has(idx) && (
+                  <div className="overflow-hidden transition-all duration-300 ease-in-out max-h-96 opacity-100">
+                    <div className="bg-neutral-800 border-l border-r border-b border-neutral-800 rounded-b-xl p-4 -mt-px">
+                      {(() => {
+                        const narrative = narrativeCache.get(idx);
+                        if (!narrative) return null;
+                        
+                        return (
+                          <>
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <FaInfoCircle className="text-blue-400" size={16} />
+                                <h3 className="text-lg font-semibold text-white">{narrative.title}</h3>
+                              </div>
+                              <button
+                                onClick={() => toggleNarrative(idx)}
+                                className="text-neutral-400 hover:text-white transition-colors"
+                              >
+                                <span className="text-sm">收起</span>
+                              </button>
+                            </div>
+
+                            <div className="space-y-4">
+                              <p className="text-neutral-300 leading-relaxed">{narrative.content}</p>
+
+                              {narrative.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                  {narrative.tags.map((tag: string, tagIdx: number) => (
+                                    <span
+                                      key={tagIdx}
+                                      className="text-xs px-3 py-1 rounded-full bg-neutral-700 text-neutral-300"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="flex items-center gap-2 text-sm text-neutral-500 pt-2 border-t border-neutral-700">
+                                {narrative.author === 'ai-analysis' ? (
+                                  <FaRobot size={14} />
+                                ) : (
+                                  <FaUser size={14} />
+                                )}
+                                <span>来源: {narrative.author === 'ai-analysis' ? 'AI 分析' : narrative.author}</span>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                 )}
               </div>
@@ -558,8 +820,92 @@ export default function Page() {
             const buyUsd = buyUsdRaw != null ? String(buyUsdRaw) : undefined;
             const sellUsd = sellUsdRaw != null ? String(sellUsdRaw) : undefined;
             return (
-              <div key={f.id || i} className="border border-neutral-800 rounded-xl p-3 bg-neutral-900">
-                <div className="flex items-center justify-between gap-3">
+              <div key={f.id || i} className="border border-neutral-800 rounded-xl p-3 sm:p-4 bg-neutral-900">
+                {/* 手机端布局 */}
+                <div className="block sm:hidden space-y-3">
+                  {/* 用户信息行 */}
+                  <div className="flex items-center gap-2">
+                    {userImg ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={userImg} alt={userName} className="w-6 h-6 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-neutral-800" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-white truncate">{userName}</div>
+                      <div className="text-xs text-neutral-500">
+                        {f.createdAt && (() => {
+                          const ts = typeof f.createdAt === 'string' ? new Date(f.createdAt) : new Date(Number(f.createdAt) * 1000);
+                          return timeAgo(ts);
+                        })()}
+                      </div>
+                    </div>
+                    {/* 操作类型标签 */}
+                    <div className="flex-shrink-0">
+                      {isBuy && buyUsd && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-emerald-900 text-emerald-300">
+                          买入 ${formatCompact(buyUsd)}
+                        </span>
+                      )}
+                      {isSell && sellUsd && f.type !== 'single_user_sell' && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-rose-900 text-rose-300">
+                          卖出 ${formatCompact(sellUsd)}
+                        </span>
+                      )}
+                      {f.type === 'single_user_sell' && f.body?.realizedPnlUsd != null && (
+                        <span className={`text-xs px-2 py-1 rounded-full ${Number(f.body.realizedPnlUsd) >= 0 ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-300'}`}>
+                          清仓 {Number(f.body.realizedPnlUsd) >= 0 ? '+' : ''}${formatNumber(String(f.body.realizedPnlUsd), { maximumFractionDigits: 2 })}
+                        </span>
+                      )}
+                      {f.type === 'user_trade_profit_milestone' && f.body?.totalPnlUsd != null && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-emerald-900 text-emerald-300">
+                          获利 +${formatNumber(String(f.body.totalPnlUsd), { maximumFractionDigits: 2 })}
+                        </span>
+                      )}
+                      {f.type === 'single_user_buy' && buyUsd && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-blue-900 text-blue-300">
+                          持仓 ${formatCompact(buyUsd)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Token 信息行 */}
+                  <div className="flex items-center gap-2">
+                    {tokenImg ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={tokenImg} alt={tokenSymbol} className="w-6 h-6 rounded object-cover" />
+                    ) : (
+                      <div className="w-6 h-6 rounded bg-neutral-800" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-white truncate">{tokenSymbol}</div>
+                      <div className="text-xs text-neutral-500 truncate flex items-center gap-1">
+                        <span>{shortenAddress(f.tokenAddress)}</span>
+                        {f.tokenAddress && (
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard.writeText(f.tokenAddress!)}
+                            className="p-0.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+                            aria-label="复制地址"
+                            title={f.tokenAddress}
+                          >
+                            <FiCopy size={10} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-sm font-semibold text-white">
+                        {priceStr ? `$${formatNumber(priceStr, { maximumFractionDigits: 6 })}` : '-'}
+                      </div>
+                      <div className="text-xs text-neutral-500">市值 {formatCompact(mcStr)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 桌面端布局 */}
+                <div className="hidden sm:flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     {/* User */}
                     {userImg ? (
