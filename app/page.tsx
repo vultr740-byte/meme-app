@@ -141,10 +141,10 @@ export default function Page() {
   const lastTokenRefreshRef = useRef(0);
   const lastMessageIdRef = useRef<string | null>(null);
   const isFirstFeedLoadRef = useRef(true);
-  const [expandedNarratives, setExpandedNarratives] = useState<Set<number>>(new Set());
-  const [narrativeCache, setNarrativeCache] = useState<Map<number, TrendingToken['narrative']>>(new Map());
-  const [loadingNarratives, setLoadingNarratives] = useState<Set<number>>(new Set());
-  const [failedNarratives, setFailedNarratives] = useState<Set<number>>(new Set());
+  const [expandedNarratives, setExpandedNarratives] = useState<Set<string>>(new Set());
+  const [narrativeCache, setNarrativeCache] = useState<Map<string, TrendingToken['narrative']>>(new Map());
+  const [loadingNarratives, setLoadingNarratives] = useState<Set<string>>(new Set());
+  const [failedNarratives, setFailedNarratives] = useState<Set<string>>(new Set());
 
   const handleFetch = useCallback(async () => {
     console.log('🔄 handleFetch 被调用, fetchingRef.current:', fetchingRef.current);
@@ -183,17 +183,17 @@ export default function Page() {
 
 
   // 切换叙事展开状态
-  const fetchNarrative = useCallback(async (index: number, tokenAddress: string) => {
-    if (narrativeCache.has(index)) {
-      return narrativeCache.get(index);
+  const fetchNarrative = useCallback(async (tokenAddress: string) => {
+    if (narrativeCache.has(tokenAddress)) {
+      return narrativeCache.get(tokenAddress);
     }
 
     // 如果之前已经失败过，直接返回失败状态
-    if (failedNarratives.has(index)) {
+    if (failedNarratives.has(tokenAddress)) {
       return 'failed';
     }
 
-    setLoadingNarratives(prev => new Set(prev).add(index));
+    setLoadingNarratives(prev => new Set(prev).add(tokenAddress));
 
     try {
       const response = await fetch(`/api/narrative?tokenAddress=${tokenAddress}`, {
@@ -204,72 +204,64 @@ export default function Page() {
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.narrative) {
-          setNarrativeCache(prev => new Map(prev).set(index, data.narrative));
+          setNarrativeCache(prev => new Map(prev).set(tokenAddress, data.narrative));
           return data.narrative;
         } else {
           // API 返回成功但没有叙事数据
-          setFailedNarratives(prev => new Set(prev).add(index));
+          setFailedNarratives(prev => new Set(prev).add(tokenAddress));
           return 'failed';
         }
       } else {
         // HTTP 请求失败
-        setFailedNarratives(prev => new Set(prev).add(index));
+        setFailedNarratives(prev => new Set(prev).add(tokenAddress));
         return 'failed';
       }
     } catch (error) {
       console.log(`❌ 获取叙事失败:`, error);
-      setFailedNarratives(prev => new Set(prev).add(index));
+      setFailedNarratives(prev => new Set(prev).add(tokenAddress));
       return 'failed';
     } finally {
       setLoadingNarratives(prev => {
         const newSet = new Set(prev);
-        newSet.delete(index);
+        newSet.delete(tokenAddress);
         return newSet;
       });
     }
   }, [narrativeCache, failedNarratives]);
 
-  const retryNarrative = useCallback(async (index: number) => {
-    if (!items) return;
-    const token = items[index];
-    if (!token?.token?.address) return;
-
+  const retryNarrative = useCallback(async (tokenAddress: string) => {
     // 清除失败状态，重新尝试
     setFailedNarratives(prev => {
       const newSet = new Set(prev);
-      newSet.delete(index);
+      newSet.delete(tokenAddress);
       return newSet;
     });
 
-    const result = await fetchNarrative(index, token.token.address);
+    const result = await fetchNarrative(tokenAddress);
     if (result !== 'failed') {
-      setExpandedNarratives(prev => new Set(prev).add(index));
+      setExpandedNarratives(prev => new Set(prev).add(tokenAddress));
     }
-  }, [items, fetchNarrative]);
+  }, [fetchNarrative]);
 
-  const toggleNarrative = useCallback(async (index: number) => {
-    if (!items) return;
-    const token = items[index];
-    if (!token?.token?.address) return;
-
+  const toggleNarrative = useCallback(async (tokenAddress: string) => {
     // 如果已经展开，直接收起
-    if (expandedNarratives.has(index)) {
+    if (expandedNarratives.has(tokenAddress)) {
       setExpandedNarratives(prev => {
         const newSet = new Set(prev);
-        newSet.delete(index);
+        newSet.delete(tokenAddress);
         return newSet;
       });
       return;
     }
 
     // 如果之前失败过，提供重试选项
-    if (failedNarratives.has(index)) {
+    if (failedNarratives.has(tokenAddress)) {
       return;
     }
 
     // 如果缓存中没有叙事数据，先获取
-    if (!narrativeCache.has(index)) {
-      const result = await fetchNarrative(index, token.token.address);
+    if (!narrativeCache.has(tokenAddress)) {
+      const result = await fetchNarrative(tokenAddress);
       // 如果获取失败，不展开叙事
       if (result === 'failed') {
         return;
@@ -277,8 +269,8 @@ export default function Page() {
     }
 
     // 展开叙事
-    setExpandedNarratives(prev => new Set(prev).add(index));
-  }, [expandedNarratives, items, narrativeCache, fetchNarrative, failedNarratives]);
+    setExpandedNarratives(prev => new Set(prev).add(tokenAddress));
+  }, [expandedNarratives, narrativeCache, fetchNarrative, failedNarratives]);
 
   const handleFetchFeed = useCallback(async () => {
     console.log('🔄 handleFetchFeed 被调用, feedFetchingRef.current:', feedFetchingRef.current);
@@ -536,7 +528,7 @@ export default function Page() {
             return (
               <div key={idx} className="space-y-0">
                 <div className={`border border-neutral-800 p-3 sm:p-4 flex items-start gap-3 sm:gap-4 bg-neutral-900 shadow-sm relative ${
-                  expandedNarratives.has(idx) ? 'rounded-t-xl' : 'rounded-xl'
+                  it.token?.address && expandedNarratives.has(it.token.address) ? 'rounded-t-xl' : 'rounded-xl'
                 }`}>
                 {it.token?.info?.imageThumbUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -585,30 +577,30 @@ export default function Page() {
                     {it.token?.address && (
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => toggleNarrative(idx)}
-                          disabled={loadingNarratives.has(idx) || failedNarratives.has(idx)}
+                          onClick={() => it.token?.address && toggleNarrative(it.token.address)}
+                          disabled={!it.token?.address || loadingNarratives.has(it.token.address) || failedNarratives.has(it.token.address)}
                           className={`text-xs px-2 py-0.5 rounded-full transition-colors cursor-pointer disabled:cursor-not-allowed ${
-                            failedNarratives.has(idx)
+                            failedNarratives.has(it.token?.address || '')
                               ? 'bg-neutral-700 text-neutral-500 cursor-not-allowed'
                               : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white'
-                          } ${loadingNarratives.has(idx) ? 'opacity-50' : ''}`}
+                          } ${loadingNarratives.has(it.token?.address || '') ? 'opacity-50' : ''}`}
                           title={
-                            failedNarratives.has(idx)
+                            failedNarratives.has(it.token?.address || '')
                               ? '该 Token 暂无叙事数据'
                               : '点击查看项目叙事'
                           }
                         >
-                          {loadingNarratives.has(idx) 
+                          {loadingNarratives.has(it.token?.address || '') 
                             ? '加载中...' 
-                            : failedNarratives.has(idx) 
+                            : failedNarratives.has(it.token?.address || '') 
                               ? '暂无叙事' 
                               : '叙事'
                           }
                         </button>
-                        {failedNarratives.has(idx) && (
+                        {it.token?.address && failedNarratives.has(it.token.address) && (
                           <button
-                            onClick={() => retryNarrative(idx)}
-                            disabled={loadingNarratives.has(idx)}
+                            onClick={() => it.token?.address && retryNarrative(it.token.address)}
+                            disabled={loadingNarratives.has(it.token.address)}
                             className="text-xs px-1 py-0.5 rounded-full bg-neutral-600 text-neutral-400 hover:bg-neutral-500 hover:text-white transition-colors"
                             title="重新尝试获取叙事"
                           >
@@ -739,11 +731,11 @@ export default function Page() {
                 </div>
                 
                 {/* 展开的叙事内容 - 抽屉效果 */}
-                {expandedNarratives.has(idx) && narrativeCache.has(idx) && (
+                {it.token?.address && expandedNarratives.has(it.token.address) && narrativeCache.has(it.token.address) && (
                   <div className="overflow-hidden transition-all duration-300 ease-in-out max-h-96 opacity-100">
                     <div className="bg-neutral-800 border-l border-r border-b border-neutral-800 rounded-b-xl p-4 -mt-px">
                       {(() => {
-                        const narrative = narrativeCache.get(idx);
+                        const narrative = narrativeCache.get(it.token.address);
                         if (!narrative) return null;
                         
                         return (
@@ -754,7 +746,7 @@ export default function Page() {
                                 <h3 className="text-lg font-semibold text-white">{narrative.title}</h3>
                               </div>
                               <button
-                                onClick={() => toggleNarrative(idx)}
+                                onClick={() => it.token?.address && toggleNarrative(it.token.address)}
                                 className="text-neutral-400 hover:text-white transition-colors"
                               >
                                 <span className="text-sm">收起</span>
