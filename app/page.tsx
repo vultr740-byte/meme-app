@@ -126,6 +126,7 @@ type FeedItem = {
     marketCap?: number | string;
     realizedPnlUsd?: number;
     totalPnlUsd?: number;
+    description?: string;
   };
 };
 
@@ -811,10 +812,43 @@ export default function Page() {
               ?? (f as Record<string, unknown>)?.amountUSD;
             const buyUsd = buyUsdRaw != null ? String(buyUsdRaw) : undefined;
             const sellUsd = sellUsdRaw != null ? String(sellUsdRaw) : undefined;
+            const isManual = f.type === 'manual';
+            
             return (
               <div key={f.id || i} className="border border-neutral-800 rounded-xl p-3 sm:p-4 bg-neutral-900">
-                {/* 手机端布局 */}
-                <div className="block sm:hidden space-y-3">
+                {/* 公告类型显示 */}
+                {isManual ? (
+                  <div className="space-y-3">
+                    {/* 公告头部 */}
+                    <div className="flex items-center gap-2">
+                      {userImg ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={userImg} alt={userName} className="w-6 h-6 sm:w-7 sm:h-7 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-neutral-800" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-white truncate">公告</div>
+                        <div className="text-xs text-neutral-500">
+                          {f.createdAt && (() => {
+                            const ts = typeof f.createdAt === 'string' ? new Date(f.createdAt) : new Date(Number(f.createdAt) * 1000);
+                            return timeAgo(ts);
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* 公告内容 */}
+                    <div className="bg-neutral-800 rounded-lg p-3">
+                      <div className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap">
+                        {b.description || '暂无公告内容'}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* 手机端布局 */}
+                    <div className="block sm:hidden space-y-3">
                   {/* 用户信息行 */}
                   <div className="flex items-center gap-2">
                     {userImg ? (
@@ -989,6 +1023,8 @@ export default function Page() {
                     <div className="text-[11px] text-neutral-500 mt-0.5">市值 {formatCompact(mcStr)}</div>
                   </div>
                 </div>
+                  </>
+                )}
               </div>
             );
           })}
