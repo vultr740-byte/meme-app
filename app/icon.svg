@@ -1,0 +1,7 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆形 -->
+  <circle cx="16" cy="16" r="16" fill="#0F172A"/>
+  
+  <!-- 火箭emoji -->
+  <text x="16" y="22" text-anchor="middle" font-size="20" fill="white">🚀</text>
+</svg>

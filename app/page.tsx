@@ -481,8 +481,21 @@ export default function Page() {
         if (firstMessageId && firstMessageId !== lastMessageId) {
           console.log('🎯 动态第一条发生变化:', lastMessageId, '->', firstMessageId);
           setHighlightedFeed(firstMessageId);
-          console.log('🔊 准备播放提示音...');
-          playNotificationSound(); // 播放提示音
+          
+          // 检查第一条动态是否为"买入"类型
+          const firstItem = list[0];
+          const isBuy = firstItem?.type && 
+            (firstItem.type.toLowerCase().includes('buy') && firstItem.type !== 'single_user_buy');
+          
+          console.log('🔍 第一条动态类型:', firstItem?.type, '是否为买入:', isBuy);
+          
+          if (isBuy) {
+            console.log('🔊 买入动态，准备播放提示音...');
+            playNotificationSound(); // 只有买入类型才播放提示音
+          } else {
+            console.log('🔇 非买入动态，跳过提示音');
+          }
+          
           // 5秒后取消高亮
           setTimeout(() => {
             setHighlightedFeed(null);
