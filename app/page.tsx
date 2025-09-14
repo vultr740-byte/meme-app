@@ -130,14 +130,53 @@ type FeedItem = {
   };
 };
 
+type LeaderboardItem = {
+  id?: string;
+  address?: string;
+  evmAddress?: string;
+  createdAt?: string;
+  displayName?: string;
+  userHandle?: string;
+  profilePictureLink?: string;
+  description?: string | null;
+  following?: number;
+  followers?: number;
+  activated?: boolean;
+  isRestricted?: boolean;
+  swapCount?: number;
+  numTrades?: number;
+  totalVolume?: number;
+  private?: boolean;
+  thumbhash?: string;
+  pnl24h?: number;
+  topHoldings?: Array<{
+    imageUrl?: string;
+    tokenAddress?: string;
+    networkId?: number;
+    humanAmount?: number;
+    price?: number;
+    value?: number;
+  }>;
+  totalHoldings?: number;
+};
+
+type LeaderboardResponse = {
+  success: boolean;
+  message?: string;
+  responseObject?: {
+    leaderboard?: LeaderboardItem[];
+  };
+};
+
 export default function Page() {
   const [items, setItems] = useState<TrendingToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const initializedRef = useRef(false);
   const fetchingRef = useRef(false);
-  const [activeTab, setActiveTab] = useState<'trending' | 'feed'>('trending');
+  const [activeTab, setActiveTab] = useState<'trending' | 'feed' | 'leaderboard'>('trending');
   const [feed, setFeed] = useState<FeedItem[] | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardItem[] | null>(null);
   const feedFetchingRef = useRef(false);
   const lastTokenRefreshRef = useRef(0);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -146,6 +185,63 @@ export default function Page() {
   const [narrativeCache, setNarrativeCache] = useState<Map<string, TrendingToken['narrative']>>(new Map());
   const [loadingNarratives, setLoadingNarratives] = useState<Set<string>>(new Set());
   const [failedNarratives, setFailedNarratives] = useState<Set<string>>(new Set());
+  const [highlightedFeed, setHighlightedFeed] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  
+  // 播放提示音
+  const playNotificationSound = useCallback(() => {
+    console.log('🔊 playNotificationSound 被调用, soundEnabled:', soundEnabled);
+    if (!soundEnabled) {
+      console.log('🔇 音效被禁用，跳过播放');
+      return; // 如果音效被禁用，直接返回
+    }
+    
+    try {
+      // 创建音频上下文
+      const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      
+      // 成功提示音：上升三音调 C-E-G (Do-Mi-Sol)
+      const playSuccessTone = (startTime: number, frequency: number, duration: number) => {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        // 连接节点
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // 设置音调：固定频率
+        oscillator.frequency.setValueAtTime(frequency, startTime);
+        oscillator.type = 'sine'; // 使用正弦波，更柔和
+        
+        // 设置音量：温和的淡入淡出
+        gainNode.gain.setValueAtTime(0, startTime);
+        gainNode.gain.linearRampToValueAtTime(0.3, startTime + 0.1); // 温和上升
+        gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration); // 温和下降
+        
+        // 播放音调
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration);
+      };
+      
+      // 播放成功提示音：重复2次 C-E-G 三音调
+      const baseTime = audioContext.currentTime;
+      
+      // 第一组：C-E-G
+      playSuccessTone(baseTime, 261.63, 0.3);        // C4 - Do
+      playSuccessTone(baseTime + 0.2, 329.63, 0.3);  // E4 - Mi
+      playSuccessTone(baseTime + 0.4, 392.00, 0.4);  // G4 - Sol
+      
+      // 第二组：重复第一组，间隔1.0秒
+      playSuccessTone(baseTime + 1.0, 261.63, 0.3);  // C4 - Do
+      playSuccessTone(baseTime + 1.2, 329.63, 0.3);  // E4 - Mi
+      playSuccessTone(baseTime + 1.4, 392.00, 0.4);  // G4 - Sol
+      
+      console.log('🔊 播放成功提示音');
+    } catch (error) {
+      console.log('❌ 播放提示音失败:', error);
+    }
+  }, [soundEnabled]);
+
 
   const handleFetch = useCallback(async () => {
     console.log('🔄 handleFetch 被调用, fetchingRef.current:', fetchingRef.current);
@@ -171,7 +267,10 @@ export default function Page() {
         throw new Error(json.message || "接口返回失败");
       }
       
-      setItems(json.responseObject || []);
+      const newItems = json.responseObject || [];
+      setItems(newItems);
+      
+      
       console.log('✅ handleFetch 完成');
     } catch (err) {
       console.log('❌ handleFetch 失败:', err);
@@ -371,10 +470,31 @@ export default function Page() {
         }
       }
       
+      // 检测动态一栏第一条消息是否发生变化（使用与toast相同的检测逻辑）
+      console.log(`🔍 检测动态变化: isFirstLoad=${isFirstFeedLoadRef.current}, listLength=${list.length}, lastMessageId=${lastMessageIdRef.current}`);
+      if (!isFirstFeedLoadRef.current && list.length > 0) {
+        const firstMessageId = list[0]?.id;
+        const lastMessageId = lastMessageIdRef.current;
+        
+        console.log(`📊 ID 比较: 最新消息ID=${firstMessageId}, 上次记录ID=${lastMessageId}`);
+        
+        if (firstMessageId && firstMessageId !== lastMessageId) {
+          console.log('🎯 动态第一条发生变化:', lastMessageId, '->', firstMessageId);
+          setHighlightedFeed(firstMessageId);
+          console.log('🔊 准备播放提示音...');
+          playNotificationSound(); // 播放提示音
+          // 5秒后取消高亮
+          setTimeout(() => {
+            setHighlightedFeed(null);
+          }, 5000);
+        }
+      }
+      
       // Update last message ID for next comparison
       if (list.length > 0 && list[0]?.id) {
         lastMessageIdRef.current = list[0].id;
       }
+      
       isFirstFeedLoadRef.current = false;
       
       console.log(`💾 更新ID记录: 最新消息ID=${lastMessageIdRef.current}, isFirstLoad=${isFirstFeedLoadRef.current}`);
@@ -387,6 +507,19 @@ export default function Page() {
       // 确保在任何情况下都重置状态
       console.log('✅ handleFetchFeed 完成');
       feedFetchingRef.current = false;
+    }
+  }, [playNotificationSound]);
+
+  const handleFetchLeaderboard = useCallback(async () => {
+    try {
+      const res = await fetch('/api/leaderboard', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json: LeaderboardResponse = await res.json();
+      if (!json.success) throw new Error(json.message || "接口返回失败");
+      setLeaderboard(json.responseObject?.leaderboard || []);
+      console.log('✅ handleFetchLeaderboard 完成');
+    } catch (err) {
+      console.log('❌ handleFetchLeaderboard 失败:', err);
     }
   }, []);
 
@@ -486,7 +619,7 @@ export default function Page() {
         cleanup();
       }
     };
-  }, [handleFetch, handleFetchFeed]);
+  }, []); // 空依赖数组，确保定时器只创建一次
 
   return (
     <div className="min-h-screen p-6 flex flex-col items-center gap-4 bg-black text-white">
@@ -507,12 +640,36 @@ export default function Page() {
             >
               动态
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('leaderboard');
+                handleFetchLeaderboard();
+              }}
+              className={`hidden sm:block px-2 py-1 rounded ${activeTab === 'leaderboard' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'}`}
+            >
+              排行榜
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-4">
           {countdown !== null && (
             <div className="text-xs text-neutral-400">下次刷新：{countdown}s</div>
           )}
+          {/* 音效开关 - 仅在桌面端显示 */}
+          <button
+            type="button"
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className={`hidden sm:block px-3 py-1 text-xs rounded transition-colors ${
+              soundEnabled 
+                ? 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700 border border-neutral-600' 
+                : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 border border-neutral-700'
+            }`}
+            title={soundEnabled ? '关闭提示音' : '开启提示音'}
+          >
+            {soundEnabled ? '🔊' : '🔇'}
+          </button>
+          
         </div>
       </div>
 
@@ -528,7 +685,7 @@ export default function Page() {
             const delta24 = toNumber(it.change24);
             return (
               <div key={idx} className="space-y-0">
-                <div className={`border border-neutral-800 p-3 sm:p-4 flex items-start gap-3 sm:gap-4 bg-neutral-900 shadow-sm relative ${
+                <div className={`border p-3 sm:p-4 flex items-start gap-3 sm:gap-4 shadow-sm relative transition-all duration-500 border-neutral-800 bg-neutral-900 ${
                   it.token?.address && expandedNarratives.has(it.token.address) ? 'rounded-t-xl' : 'rounded-xl'
                 }`}>
                 {it.token?.info?.imageThumbUrl ? (
@@ -815,7 +972,21 @@ export default function Page() {
             const isManual = f.type === 'manual';
             
             return (
-              <div key={f.id || i} className="border border-neutral-800 rounded-xl p-3 sm:p-4 bg-neutral-900">
+              <div key={f.id || i} className={`border rounded-xl p-3 sm:p-4 shadow-sm relative transition-all duration-500 ${
+                f.id && highlightedFeed === f.id
+                  ? 'border-blue-500 bg-blue-500/10 shadow-blue-500/20 shadow-lg animate-pulse'
+                  : 'border-neutral-800 bg-neutral-900'
+              }`} style={{
+                animation: f.id && highlightedFeed === f.id 
+                  ? 'shake 0.5s ease-in-out 3' 
+                  : undefined
+              }}>
+                {/* 新动态提示标签 */}
+                {f.id && highlightedFeed === f.id && (
+                  <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg animate-pulse">
+                    新
+                  </div>
+                )}
                 {/* 公告类型显示 */}
                 {isManual ? (
                   <div className="space-y-3">
@@ -1028,6 +1199,96 @@ export default function Page() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {activeTab === 'leaderboard' && Array.isArray(leaderboard) && (
+        <div className="w-full max-w-5xl grid grid-cols-1 gap-3">
+          {leaderboard.length === 0 && <div className="text-gray-400">暂无排行榜数据</div>}
+          {leaderboard.map((item, index) => (
+            <div key={item.id || index} className="border border-neutral-800 rounded-xl p-3 sm:p-4 bg-neutral-900">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {/* 排名 */}
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center">
+                    <span className="text-sm font-bold text-white">#{index + 1}</span>
+                  </div>
+                  
+                  {/* 用户信息 */}
+                  {item.profilePictureLink ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img 
+                      src={item.profilePictureLink} 
+                      alt={item.displayName || "用户"} 
+                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover flex-shrink-0" 
+                    />
+                  ) : (
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-neutral-800 flex-shrink-0" />
+                  )}
+                  
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-white truncate">
+                      {item.displayName || item.userHandle || "未知用户"}
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      {item.followers ? `${formatCompact(String(item.followers))} 粉丝` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 交易数据 */}
+                <div className="text-right flex-shrink-0">
+                  <div className={`text-lg sm:text-xl font-bold ${(item.pnl24h || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {item.pnl24h ? `${(item.pnl24h >= 0 ? '+' : '')}$${formatNumber(String(item.pnl24h), { maximumFractionDigits: 2 })}` : '-'}
+                  </div>
+                  <div className="text-sm text-neutral-400 font-medium">
+                    24h 盈亏
+                  </div>
+                </div>
+              </div>
+
+              {/* 交易统计 */}
+              <div className="mt-3 flex flex-wrap gap-4 text-xs text-neutral-400">
+                <span>总交易量: ${formatCompact(String(item.totalVolume || 0))}</span>
+                <span>交易次数: {item.numTrades || 0}</span>
+                <span>持仓数: {item.totalHoldings || 0}</span>
+              </div>
+
+              {/* 前3个持仓 */}
+              {item.topHoldings && item.topHoldings.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-neutral-800">
+                  <div className="text-xs text-neutral-500 mb-3 font-medium">前3持仓</div>
+                  <div className="flex flex-wrap gap-2 sm:gap-3">
+                    {item.topHoldings.slice(0, 3).map((holding, holdingIndex) => (
+                      <div key={holdingIndex} className="bg-neutral-800 rounded-lg px-3 py-2.5 hover:bg-neutral-750 transition-colors min-w-0 flex-1 sm:flex-none sm:w-auto">
+                        <div className="flex items-center gap-2.5">
+                          {holding.imageUrl && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img 
+                              src={holding.imageUrl} 
+                              alt="Token" 
+                              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover flex-shrink-0" 
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-white truncate">
+                              ${formatNumber(String(holding.value || 0), { maximumFractionDigits: 0 })}
+                            </div>
+                            <div className="text-xs text-neutral-400 truncate">
+                              {holding.tokenAddress === 'So11111111111111111111111111111111111111112' 
+                                ? formatNumber(String(holding.humanAmount || 0), { maximumFractionDigits: 4 })
+                                : formatCompact(String(holding.humanAmount || 0))
+                              }
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
